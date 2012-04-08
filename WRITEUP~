@@ -1,0 +1,1131 @@
+Title:  Writeup for Project 2, Fall 2010
+
+Date:  10/11/10
+
+Group Number 57 :       Name:                     Email:                    Student id:
+ 
+						Abhishek Tayal            atayal@usc.edu            9292764017 
+						Mihir Shah                mihirash@usc.edu          8055645954  
+						Priyanshu Gupta           priyansg@usc.edu          4438856992
+
+I. Requirements:
+
+Part I:
+-In this assignment, we move from kernel program to user program. Hence, we have to build our own system-calls that nachos did not provide for the user.
+
+-This is different from first assignment as in that we were running our whole program in kernel mode in the UNIX machine's view. So, we could use system-calls that UNIX provides for the user.
+
+-While in this assignment we try to work our program in user mode in nachos, as a result we have to make our own system-calls, as nachos does not provide any system calls.
+
+what to do??
+
+Implement  Fork, Exec, Exit, and Yield in syscall.h
+Implement Locks : CreateLock(),DestroyLock(),Acquire() and Release() methods
+Implement Conditions : CreateCV(),DestroyCV(),Wait(), Signal(), and Broadcast()
+Implement printf and scanf: Printf(),Printf1() and Scanf()
+
+Part II:
+
+-In this part we have to make changes in nachos in order to support the multiprogramming,so that we can run multiple carl's junior processes. For this , we have to understand how virtual memory and physical memory work together. Also, we have to understand the concept of Page Table that maps virtual memory and physical memory.
+
+what to do??
+
+-Configure the addrspace.cc to map virtual memory with physical memory by using page table using a "Bit map".
+-We have used static allocation of pages while we create the process.When a process is created space for 100 threads are allocated.And when, threads are forked each of them is given their 8 pages from the allocated pages. 
+-Complete the design of  Exec( ) and Fork( ) and check that they work correctly.
+
+
+Part III:
+
+-In this we use our system calls made in part I and II to run 2 carl's junior processes.
+
+-----------------------------------------------------------------------------------------------------------------------
+
+II. Assumptions:
+
+what we assume??   
+- There are 1 Million pages of memory available in nachos.
+- The maximum number of process allowed are 64.
+- Each process has a maximum of 100 threads.
+- Total number of locks per process is defined by totallocks = 500 in system.h
+- Total number of CVs per process is defined by totalcvs = 500  in sytem.h
+- User Stack size is 8 pages.
+
+
+III. Design:
+
+-----------------------------------------------------------------------------------------------------------------------
+PART I
+-----------------------------------------------------------------------------------------------------------------------
+
+First we create 2 structures namely userlocks and usercvs in system.h.In this structures we store the details about the lock and cvs we are creating.
+
+Design is as follows
+
+struct userlocks
+{
+	//name of lock
+	char* name;
+	
+	//to create lock
+	Lock* lock;
+	
+	//address space pointer
+	AddrSpace *add_space;
+	
+	//to check whether position has already been acquired or not
+	int flag;
+	
+	//counter to check the usage of lock
+	int lock_usagecounter;
+};
+
+struct usercvs
+{
+	//name of condition
+	char* name;
+	
+	//to create condition
+	Condition* condition;
+	
+	//address space pointer
+	AddrSpace *add_space;
+	
+	//to check whether position has already been acquired or not
+	int flag;	
+	
+	//counter to check the usage of condition
+	int cv_usagecounter;
+};
+-----------------------------------------------------------------------------------------------------------------------
+- exception.cc
+        -The code added to exception is used to implement locks ,condition variables, Exec and Fork.
+-----------------------------------------------------------------------------------------------------------------------
+
+CreateLock		  
+GENERAL ALGORITHM FOR CreateLock(virtual_add,size) 
+
+int CreateLock_Syscall(unsigned int virt_add,int size)
+{
+	check if size of name of lock is valid or not
+   if(size<=0 || size >20)
+	{   
+		The size of name of lock is either too big or small
+		return -1;
+	}
+
+	//read in the string at the virtual address, copy it to a buffer(mybuf),and returns the number of bytes read in a
+
+  int a = copyin(virt_add, size, mybuf);
+   if(a == -1) //i.e a wrong address was passed
+    {
+        printf("In create_lock: ERROR in Virtual Address\n");
+        return -1;
+    }
+
+else //address is right..and we know the size of the name of lock in "a"
+{
+    // first acquire the lock..so that only one thread access the structure at a time
+
+    locksmanagerLock->Acquire();
+    printf("In create_lock: Now creating a lock \n");
+    for(int i=0;i<totallocks;i++)
+    {
+
+        if(userlock[i].flag==0)//this i position is empty
+        {
+			update fields in the structure
+			
+			return the index on which lock is made..			
+			return i;
+        }
+    }
+
+	locksmanagerLock->Release();
+    printf("In create_lock: No space for creating a Lock!!!\n");
+    return -1;
+
+}
+
+}
+}
+
+------------------------------------------------------------------------------------------------------------------------
+Lock::Acquire()  
+GENERAL ALGORITHM FOR Acquire()
+-----------------------------------------------------------------------------------------------------------------------
+          
+void Acquire_Syscall(unsigned int val)
+
+{
+      printf("inside acquire system call\n");
+
+      //first acquire the lock..so that only one thread access the structure at a time
+
+      locksmanagerLock->Acquire();
+      int value = val;//no. of the lock to be acquired
+
+	  //illegal lock number is passed
+      if(value < 0 || value > 100)
+      {
+            printf("In acquire_lock: ILLEGAL LOCK NUMBER\n");
+            locksmanagerLock->Release();
+            return;
+      }
+		
+	  //if there is no lock at this position	
+	  if(userlock[value].flag == 0)
+      {
+          printf("In acquire_lock:LOCK HAS BEEN DESTROYED\n");
+		  locksmanagerLock->Release();
+		  return;
+	  }
+
+      //check if process trying to acquire lock has same address space as that of lock..
+      if(userlock[value].add_space != currentThread->space)
+		{
+          printf("In acquire_lock: LOCK BELONGS TO DIFFERENT PROCESS\n");
+          locksmanagerLock->Release();
+          return;
+	   }
+	   
+      // all clear...now lock can be acquired
+		update the lock structure fields
+		acquire the lock..
+		
+		return;
+
+}
+
+------------------------------------------------------------------------------------------------------------------------
+Lock::Release()  
+GENERAL ALGORITHM FOR Release()
+-----------------------------------------------------------------------------------------------------------------------
+          
+void Release_Syscall(unsigned int val)
+
+{
+      printf("inside release system call\n");
+
+      //first acquire the lock..so that only one thread access the lock structure at a time
+
+      locksmanagerLock->Acquire();
+      int value = val;//no. of the lock to be acquired
+
+	  //illegal lock number is passed
+      if(value < 0 || value > 100)
+      {
+            printf("In acquire_lock: ILLEGAL LOCK NUMBER\n");
+            locksmanagerLock->Release();
+            return;
+      }
+		
+	  //if there is no lock at this position	
+	  if(userlock[value].flag == 0)
+      {
+          printf("In acquire_lock:LOCK HAS BEEN DESTROYED\n");
+		  locksmanagerLock->Release();
+		  return;
+	  }
+
+      //check if process trying to acquire lock has same address space as that of lock..
+      if(userlock[value].add_space != currentThread->space)
+		{
+          printf("In acquire_lock: LOCK BELONGS TO DIFFERENT PROCESS\n");
+          locksmanagerLock->Release();
+          return;
+	   }
+	   
+      // all clear...now lock can be released
+		update the lock structure fields
+		release the lock..
+		
+		return;
+
+}
+
+
+------------------------------------------------------------------------------------------------------------------------
+Lock::DestroyLock()  
+GENERAL ALGORITHM FOR DestroyLock()
+-----------------------------------------------------------------------------------------------------------------------
+          
+void DestroyLock_Syscall(unsigned int val)
+
+{
+      printf("inside destroy_lock system call\n");
+
+      //first acquire the lock..so that only one thread access the lock structure at a time
+
+      locksmanagerLock->Acquire();
+      int value = val;//no. of the lock to be acquired
+
+	  //illegal lock number is passed
+      if(value < 0 || value > 100)
+      {
+            printf("In acquire_lock: ILLEGAL LOCK NUMBER\n");
+            locksmanagerLock->Release();
+            return;
+      }
+		
+	  //if there is no lock at this position	
+	  if(userlock[value].flag == 0)
+      {
+          printf("In acquire_lock:LOCK HAS BEEN DESTROYED\n");
+		  locksmanagerLock->Release();
+		  return;
+	  }
+
+      //check if process trying to acquire lock has same address space as that of lock..
+      if(userlock[value].add_space != currentThread->space)
+		{
+          printf("In acquire_lock: LOCK BELONGS TO DIFFERENT PROCESS\n");
+          locksmanagerLock->Release();
+          return;
+	   }
+	   
+	  //check if lock is still in use 	
+     if(userlock[value].lock_usagecounter > 0)
+      {
+          printf("In destroy_lock: the lock #%d is in use!!! so it cannot be destroyed\n",value);
+          locksmanagerLock->Release();
+          return;
+      }
+	   
+      // all clear...now lock can be destroyed
+		update the lock structure fields
+		destroy the lock..
+		
+		return;
+
+}
+
+-----------------------------------------------------------------------------------------------------------------------
+Condition variable:Create() 		  
+GENERAL ALGORITHM FOR CreateCV(virtual_add,size) 
+-----------------------------------------------------------------------------------------------------------------------
+
+int CreateCV_Syscall(unsigned int virt_add,int size)
+{
+	check if size of name of condition is valid or not
+   if(size<=0 || size >20)
+	{   
+		The size of name of CV is either too big or small
+		return -1;
+	}
+
+	//read in the string at the virtual address, copy it to a buffer(mybuf),and returns the number of bytes read in a
+
+  int a = copyin(virt_add, size, mybuf);
+   if(a == -1) //i.e a wrong address was passed
+    {
+        printf("In create_CV: ERROR in Virtual Address\n");
+        return -1;
+    }
+
+else //address is right..and we know the size of the name of CV in "a"
+{
+    // first acquire the lock..so that only one thread access the structure at a time
+
+    cvsmanagerLock->Acquire();
+    printf("In create_cv: Now creating a CV \n");
+    for(int i=0;i<totalcvs;i++)
+    {
+
+        if(usercv[i].flag==0)//this i position is empty
+        {
+			update fields in the structure
+			
+			return the index on which lock is made..			
+			return i;
+        }
+    }
+
+	cvsmanagerLock->Release();
+    printf("In create_CV: No space for creating a CV!!!\n");
+    return -1;
+
+}
+
+}
+}
+
+
+-----------------------------------------------------------------------------------------------------------------------
+Condition variable:Destroy() 		  
+GENERAL ALGORITHM FOR DestroyCV(virtual_add,size) 
+-----------------------------------------------------------------------------------------------------------------------
+
+int CreateCV_Syscall(unsigned int virt_add,int size)
+{
+	check if size of name of condition is valid or not
+   if(size<=0 || size >20)
+	{   
+		The size of name of CV is either too big or small
+		return -1;
+	}
+
+   //read in the string at the virtual address, copy it to a buffer(mybuf),and returns the number of bytes read in a
+
+  int a = copyin(virt_add, size, mybuf);
+   if(a == -1) //i.e a wrong address was passed
+    {
+        printf("In create_CV: ERROR in Virtual Address\n");
+        return -1;
+    }
+	
+	//check if addresses space is same or not
+	if(usercv[value].add_space != currentThread->space)
+    {
+        printf("In destroy_CV: Condition BELONGS TO DIFFERENT PROCESS so cannot destroy\n");
+        cvsmanagerLock->Release();
+        return;
+    }
+
+	//if there is no CV at this index...this is error
+    if(usercv[value].flag == 0)
+    {
+        printf("In destroy_CV:condition HAS already BEEN DESTROYED\n");
+        cvsmanagerLock->Release();
+        return;
+    }
+
+	//if the condition is in use,no destruction
+    if(usercv[value].cv_usagecounter > 0)
+    {
+        printf("In destroy_CV: the condition is in use!!!\n");
+        cvsmanagerLock->Release();
+        return;
+    }
+	
+	//CV not in use any more
+	if(usercv[value].cv_usagecounter==0)
+    {
+        usercv[value].flag = 0;
+        printf("In destroy_CV: destroying condition variable number %d\n",value);
+        cvsmanagerLock->Release();
+        return;
+    }
+
+}
+
+}
+}
+
+
+-----------------------------------------------------------------------------------------------------------------------
+Condition::Wait() 
+-----------------------------------------------------------------------------------------------------------------------
+
+void Signal_Syscall(unsigned int val, int id)
+
+{
+      //first acquire the lock of lock structure
+      locksmanagerLock->Acquire();
+
+      //no. of the condition variable
+	  int value=val;
+	  
+      //no. of the lock on which wait is called
+	  int lock_id=id;
+	  
+      if(lock_id < 0 || lock_id > 100)//illegal lock number
+      {
+        printf("In Wait: illegal lock number\n");
+        locksmanagerLock->Release();
+        return;
+      }
+
+      //check if process have access to the lock variable
+      if(userlock[lock_id].add_space != currentThread->space)
+      {
+        printf("In Wait: Lock belongs to different process so cannot use it\n");
+        locksmanagerLock->Release();
+        return;
+      }
+
+	  //check if there is a lock at this position..
+      if(userlock[lock_id].flag == 0)
+      {
+        printf("In Wait: lock has been destroyed\n");
+        locksmanagerLock->Release();
+        return;
+      }
+  
+      cvsmanagerLock->Acquire();
+
+     if(value < 0 || value > 100)//illegal condition number
+     {
+        printf("In Wait: illegal condition number\n");
+        cvsmanagerLock->Release();
+        return;
+     }
+
+	 //check if process have access to the condition variable
+     if(usercv[value].add_space != currentThread->space)
+     {
+        printf("In Wait: Condition belongs to different process so cannot use it\n");
+        cvsmanagerLock->Release();
+        return;
+     }
+	
+     //check if condition is there is at this position	
+     if(usercv[value].flag == 0)
+     {
+       printf("In Wait: condition has already been destroyed\n");
+       cvsmanagerLock->Release();
+       return;
+     }
+
+     //all clear now condition can Wait on the lock...
+     usercv[value].cv_usagecounter++;
+
+      cvsmanagerLock->Release();
+      locksmanagerLock->Release();
+
+      printf("In Wait: wait done on lock # %d by condition # %d\n",lock_id,value);
+
+      usercv[value].condition->Wait(userlock[lock_id].lock);
+      return;
+
+}
+
+-----------------------------------------------------------------------------------------------------------------------
+Condition::Signal() 
+-----------------------------------------------------------------------------------------------------------------------
+
+void Signal_Syscall(unsigned int val, int id)
+
+{
+      //first acquire the lock of lock structure
+      locksmanagerLock->Acquire();
+
+      //no. of the condition variable
+	  int value=val;
+	  
+      //no. of the lock on which wait is called
+	  int lock_id=id;
+	  
+      if(lock_id < 0 || lock_id > 100)//illegal lock number
+      {
+        printf("In Signal: illegal lock number\n");
+        locksmanagerLock->Release();
+        return;
+      }
+
+      //check if process have access to the lock variable
+      if(userlock[lock_id].add_space != currentThread->space)
+      {
+        printf("In Signal: Lock belongs to different process so cannot use it\n");
+        locksmanagerLock->Release();
+        return;
+      }
+
+	  //check if there is a lock at this position..
+      if(userlock[lock_id].flag == 0)
+      {
+        printf("In Signal: lock has been destroyed\n");
+        locksmanagerLock->Release();
+        return;
+      }
+  
+      cvsmanagerLock->Acquire();
+
+
+     if(value < 0 || value > 100)//illegal condition number
+     {
+        printf("In Signal: illegal condition number\n");
+        cvsmanagerLock->Release();
+        return;
+     }
+
+	 //check if process have access to the condition variable
+     if(usercv[value].add_space != currentThread->space)
+     {
+        printf("In Signal: Condition belongs to different process so cannot use it\n");
+        cvsmanagerLock->Release();
+        return;
+     }
+	
+     //check if condition is there is at this position	
+     if(usercv[value].flag == 0)
+     {
+       printf("In Signal: condition has already been destroyed\n");
+       cvsmanagerLock->Release();
+       return;
+     }
+
+     //all clear now condition can signal on the lock...
+     usercv[value].condition->Signal(userlock[lock_id].lock);
+
+      //decrement condition usage counter
+      usercv[value].cv_usagecounter--;
+      cvsmanagerLock->Release();
+      locksmanagerLock->Release();
+      return;
+
+}
+
+
+--------------------------------------------------------------------------------------------------------------------------	Condition::Broadcast() 
+-----------------------------------------------------------------------------------------------------------------------
+
+void Broadcast_Syscall(unsigned int val, int id)
+
+{
+      //first acquire the lock of lock structure
+      locksmanagerLock->Acquire();
+
+      //no. of the condition variable
+	  int value=val;
+	  
+      //no. of the lock on which wait is called
+	  int lock_id=id;
+	  
+      if(lock_id < 0 || lock_id > 100)//illegal lock number
+      {
+        printf("In Broadcast: illegal lock number\n");
+        locksmanagerLock->Release();
+        return;
+      }
+
+      //check if process have access to the lock variable
+      if(userlock[lock_id].add_space != currentThread->space)
+      {
+        printf("In Broadcast: Lock belongs to different process so cannot use it\n");
+        locksmanagerLock->Release();
+        return;
+      }
+
+	  //check if there is a lock at this position..
+      if(userlock[lock_id].flag == 0)
+      {
+        printf("In Broadcast: lock has been destroyed\n");
+        locksmanagerLock->Release();
+        return;
+      }
+  
+      cvsmanagerLock->Acquire();
+
+
+     if(value < 0 || value > 100)//illegal condition number
+     {
+        printf("In Broadcast: illegal condition number\n");
+        cvsmanagerLock->Release();
+        return;
+     }
+
+	 //check if process have access to the condition variable
+     if(usercv[value].add_space != currentThread->space)
+     {
+        printf("In Broadcast: Condition belongs to different process so cannot use it\n");
+        cvsmanagerLock->Release();
+        return;
+     }
+	
+     //check if condition is there is at this position	
+     if(usercv[value].flag == 0)
+     {
+       printf("In Broadcast: condition has already been destroyed\n");
+       cvsmanagerLock->Release();
+       return;
+     }
+
+     //all clear now condition can Broadcast on the lock...
+	  int j=usercv[value].condition->Broadcast(userlock[lock_id].lock);
+      usercv[value].cv_usagecounter -=j;
+
+      cvsmanagerLock->Release();
+      userlock[value].lock_usagecounter -=j;
+
+      locksmanagerLock->Release();
+      return;
+}
+
+---------------------------------------------------------------------------------------------------------------------------
+Part II
+1)
+Exec(), Fork() 
+--------------------------------------------------------------------------------------------------------------------------	
+
+////////////
+//EXEC()
+////////////	
+
+SpaceId Exec_Syscall(unsigned int vaddr, int length)
+
+{
+    printf("inside exec system call");
+
+    int q;
+
+	// Kernel buffer to put the name in
+    char *filename = new char[length+1]; 
+    int a= copyin(vaddr,length, filename);
+    if(a == -1) //i.e a wrong address was passed
+    {
+        printf("In exec: ERROR in Virtual Address\n");
+        //locksmanagerLock->Release();
+
+        return -1;
+    }
+
+	//address passed is right
+    else
+    {
+      OpenFile *executable = fileSystem->Open(filename);
+
+      AddrSpace *space;
+      if (executable == NULL) 
+	  {
+		printf("Unable to open file %s\n", filename);
+		return -1;
+      }
+
+      space = new AddrSpace(executable);
+
+	  // storing end of addrspace
+      unsigned int m = space->get_numpages();    
+      Thread *t;
+	  
+      t= new Thread ("exec_thread");
+
+      t->space= space;
+      pro_tablelock->Acquire();
+
+      pro_table.total_pro++;
+      for (int w=0;w<MAX_PROCESSES; w++)
+      {
+        //if certain index is free..make it busy
+		if(pro_table.pro_table_array[w].process_flag==0)
+        {
+			update the process table..
+        }
+
+      }
+
+	  //release pro_tablelock
+      pro_tablelock->Release();             
+
+	  //fork a new thread
+      t->Fork((VoidFunctionPtr)exec_thread,0);
+
+      return q;
+
+      }
+
+}
+//called by exec..
+void exec_thread(int no)
+
+{
+
+	  // set the initial register values
+      currentThread->space->InitRegisters(); 
+
+	  // load page table register	
+	  currentThread->space->RestoreState();  
+      
+	  // jump to the user progam	
+      machine->Run();   
+
+}
+
+//////////
+//FORK()
+//////////
+
+void Fork_Syscall(unsigned int virtual_add)
+
+{
+      printf("inside fork syscall\n");
+
+      Thread*t;
+		
+		//creating a new thread 
+       t= new Thread ("thread1");
+		
+	  //acquiring process table lock	
+      pro_tablelock->Acquire();
+
+      int pro_index, thread_index;
+      for (int i=0;i<MAX_PROCESSES; i++)
+      {
+		//checking... to which process does the thread belong to
+		if (currentThread->space==pro_table.pro_table_array[i].personal_addrspace)
+
+            {
+				increasing total number of threads in process
+                for (int j=0;j<MAX_THREADS;j++)
+                {
+                    if(pro_table.pro_table_array[i].thread_table_array[j].thread_flag==0)
+                    {
+						//finding a free space in thread table..
+						//assigning the process's address space to thread
+                    }
+                }
+            break;
+            }
+      }
+	  
+      //release process table lock	
+      pro_tablelock->Release();
+
+      //forking a new thread 
+      t->Fork((VoidFunctionPtr)forking,(unsigned int)fork_data_struct_obj);
+}
+
+//called by above function
+void forking(unsigned int obj)
+
+{
+	
+    machine->WriteRegister(PCReg,obj2->addrs );
+
+    machine->WriteRegister(NextPCReg,obj2->addrs+4 );
+    
+	//restoring the state
+	currentThread->space->RestoreState();
+                    machine->WriteRegister(StackReg,pro_table.pro_table_array[obj2->pro_no].endof_addrspace+(obj2->thr_no*8*PageSize));
+
+    //jump to user program
+	machine->Run();
+
+}
+
+//////////
+//EXIT()
+//////////
+
+
+void Exit_Syscall()
+{
+	
+    int active_threads=0;
+    //acquire the process table lock
+	pro_tablelock->Acquire();
+	
+		
+    for(int i=0;i<MAX_PROCESSES;i++)
+    {
+        //check if the address space of the thread is same as that of the process
+		if(pro_table.pro_table_array[i].personal_addrspace== currentThread->space)
+        {
+			//if no other threads in the process..
+            if(pro_table.pro_table_array[i].total_threads==0)
+            {
+				//if last process then halt the system
+                if(pro_table.total_pro==1)
+                {
+                    interrupt->Halt();
+                }
+				//else decrease the number of process...
+                else
+                {
+                    pro_table.total_pro--;
+                    
+                }
+            }
+			//there are many threads in the process
+            else
+            {
+                pro_table.pro_table_array[i].total_threads--;
+                currentThread->Finish();
+            }
+        }
+
+    }
+
+
+    pro_tablelock->Release();
+
+
+}
+
+
+//////////
+//YIELD()
+//////////
+
+void Yield_syscall()
+{
+	//yield the current thread
+	currentThread->Yield();
+}
+
+
+//////////////////////////////////////////
+//PRINTF() with 1 args
+//////////////////////////////////////////
+
+
+void Printf1_Syscall(unsigned int add,int arg2)
+{
+    int arg=arg2;
+    char* mybuf;
+    mybuf = new char[50];
+
+
+    //read in the string at the virtual address, copy it to a buffer(mybuf),and returns the number of bytes read in a
+    int a = copyin(add, 50, mybuf);
+
+    if(a == -1) //i.e a wrong address was passed
+    {
+        printf("In printf 1:ERROR in Virtual Address\n");
+        //cvsmanagerLock->Release();
+        return ;
+    }
+
+    else //address is right..and we know the size of the name of lock in a
+    {
+        printf("%s %d",mybuf,arg);
+        return;
+    }
+}
+
+//////////////////////////////////////////
+//PRINTF() with 2 args
+/////////////////////////////////////////
+
+void Printf2_Syscall(unsigned int add,int arg1,int arg2)
+{
+    char* mybuf;
+    mybuf = new char[100];
+
+    //read in the string at the virtual address, copy it to a buffer(mybuf),and returns the number of bytes read in a
+    int a = copyin(add, 50, mybuf);
+
+    if(a == -1) //i.e a wrong address was passed
+    {
+        printf("In printf 2:ERROR in Virtual Address\n");
+        //cvsmanagerLock->Release();
+        return ;
+    }
+    else //address is right..and we know the size of the name of lock in a
+    {
+        printf("%s %d",mybuf,arg1,arg2);
+        return;
+    }
+}
+
+
+
+//////////
+//SCANF()
+//////////
+
+int Scanf_Syscall(void)
+{
+	int q;
+	//get input in q
+    scanf("%d",&q);
+    return q;
+}
+
+---------------------------------------------------------------------------------------------------------------------------
+Part II
+2)Create ProcessTable and changing the memory mapping
+
+-By default in Nachos the virtual page number and physical page number is same.We have to use a bitmap so that, based on the free spaces in the main memory memory slots are allocated to the process.
+
+**Processtable:
+-In this we have used a structure which has 2 entries namely total number of process and a process table structure.
+
+**Process table structure
+-Flags //to check whether current postion is acquired by certain process or not
+
+-starting Addressspace //starting address space of the process
+
+-total threads //total number of threads in each process
+
+-ending addressspace //ending address spacxe of each process
+
+-thread table structure object //object to access thread table 
+
+**thread table structure
+-flag //to check whether current postion is acquired by certain thread or not 
+
+--------------------------------------------------------------------------------------------------------------------------
+
+
+IV. Implementation:
+
++ Files Modified
+    -exception.cc
+	-system.h
+	-system.cc
+	-addrspace.h
+	-addrspace.cc
+	-start.s
+	-syscall.h
+	-machine.cc(NumPhysPages)	
+
++ Data Structures added, and the file they were added to.
+
+	-in file system.h,
+	
+struct userlocks
+{
+	char* name;//name of lock
+	Lock* lock;//to create lock
+	AddrSpace *add_space;//address space pointer
+	int flag;
+	int lock_usagecounter;//counter to check the usage of lock
+};
+extern userlocks userlock[100];
+
+-----------------------------------------------------------------------------------------------------------------------
+
+struct usercvs
+{
+	char* name; //name of condition
+	Condition* condition; //to create condition
+	AddrSpace *add_space; //address space pointer
+	int flag;
+	int cv_usagecounter;//counter to check the usage of condition
+};
+extern usercvs usercv[100];
+
+Lock *locksmanagerLock;
+Lock *cvsmanagerLock;
+
+-----------------------------------------------------------------------------------------------------------------------
+
+struct Thread_table         // struct to store info related to a specific thread
+{
+   int thread_flag; 
+}; 
+ 
+struct Personal_pro_table        //  struct to store info related to a specific Process
+{
+    int process_flag;
+    int total_threads;
+    AddrSpace *personal_addrspace;
+    unsigned int endof_addrspace;
+    Thread_table thread_table_array[MAX_THREADS]; 
+}; 
+
+struct Pro_table          // global struct to store process table
+{
+    int total_pro;
+    Personal_pro_table pro_table_array [MAX_PROCESSES] ; 
+}; 
+-----------------------------------------------------------------------------------------------------------------------
+ 
+extern Thread_table thread_table;  //// struct to store info related to a specific thread
+extern Personal_pro_table personal_pro_table;
+extern Pro_table pro_table;  // structure obj for the process table 
+
+-----------------------------------------------------------------------------------------------------------------------
+
+//bitmap object
+extern BitMap *bitMap_obj;
+   
+//process table lock
+extern Lock *pro_tablelock;
+
+//mainmemorylock
+extern Lock *mainmemorylock;
+
+	   
++ Data Structures modified, and the file they were added to.
+
+
++ Functions modified and in which file.
+    - in addrspace.cc
+        -AddrSpace::AddrSpace()
+
+	- in exception.cc
+		-CreateLock_syscall()
+		-DestroyLock_syscall()
+		-Acquire_syscall()
+		-Release_syscall()
+		-CreateCV_syscall()
+		-DestroyCV_syscall()
+		-Signal_syscall()
+		-Wait_syscall()
+		-Broadcast_syscall()
+		-Printf_syscall()
+		-Printf1_syscall()
+		-Scanf_syscall()
+		-Exit_syscall()
+		-Yield_syscall()
+		-Fork_syscall()
+		-Exec_syscall()
+	
+	- in system.cc
+		-system::system()
+		
+	- in syscall.h
+		-Created system calls interface
+
+		-void Fork(void (*func)());
+		-void forking(unsigned int);
+		-void Yield();
+		-int CreateLock(char *name,int length);
+		-void DestroyLock(int lock_num);
+		-void Acquire(int lock_num);
+		-void Release(int lock_num);
+		-int CreateCV(char *name,int length);
+		-void DestroyCV(int condition_num);
+		-void Signal(int condition_num, int lock_num);
+		-void Wait(int condition_num, int lock_num);
+		-void Broadcast(int condition_num, int lock_num);
+		-void Printf()
+		-void Printf1()
+		-int Scanf()
+		-SpaceId Exec()
+		-void Exit()
+		
+		
+	-in start.s
+		-assembly code for each of the system calls
+		
+V. Testing:  (For each test case, you must show)
+
+    + How to test
+		-Compile directories userprog, threads and test.
+		-In userprog, run the project using the command: nachos -x ../test/maintest -d s
+		-For full simulation use the command: nachos -x ../test/maintest
+	      	
+	+ Test Output
+		-There are 13 testcases in total.
+		-Press the number of the testcase and see the output.	
+		
+
+
+VI. Discussion:
+
+	Test headings:
+	
+		-test1():General interaction between 2 threads.
+		-test2():threads trying to work on lock that has not been created.
+		-test3():Broadcast all the waiting threads
+		-test4():signal done by thread but no one waiting..
+		-test5():many threads waiting.....but only one signal
+		-test6():one thread waiting on some lock and other thread signals it on some other lock...
+		-test7():lock number is greater than max locks space..i.e 100.
+		-test8():fork more than 100 threads in 1 process..
+		-test9():Two processes forks 2 threads each and 2 threads tries to acquire each other's lock.
+		-test10():lock acquired by one thread so all other should wait for the thread to release the lock..
+		-test11():Destruction of locks and Condition variables
+		-test12():Full simulation
+
+	Test Output:
+
+		-test1():Two threads interact using wait and signal on a lock
+		-test2():Two threads trying to communicate with each other using illegal locks
+		-test3():Broadcasts all the waiting threads
+		-test4():signal done by one thread but no one waiting..so deadlock
+		-test5():many threads waiting.....but only one signal
+		-test6():one thread waiting on some lock and other thread signals it on some other lock...so no thread wakes up
+		-test7():lock  number is greater than max locks space..i.e 100 as a result it gives error
+		-test8():fork more than 100 threads in 1 process..and it gives error
+		-test9():It gives error. 
+		-test10():lock is acquired by one thread so all other waits for the thread to release the lock..
+		-test11():Destroys locks and all the condition variables created
+		-test12():The full simulation runs 2 carl's junoir simultaneously using any of the rs values.
+		
+		
+	//////////////////////////////////////////////////THANK YOU////////////////////////////////////////////////	
+		
